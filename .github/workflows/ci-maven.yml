@@ -3,7 +3,7 @@ name: Java CI with Maven
 on: workflow_dispatch
 
 env:
-  IMAGE_NAME: cloud-sample
+  IMAGE_NAME: sampleapp1-82022072
 
 jobs:
   build:
