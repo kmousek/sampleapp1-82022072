@@ -11,7 +11,7 @@ public class UserController {
 
 	@GetMapping
     public String home() {
-        return "82022071";
+        return "82022072";
     }
 	
 }
