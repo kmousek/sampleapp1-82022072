@@ -1,5 +1,6 @@
 # FROM bellsoft/liberica-openjdk-alpine:17
-FROM cepgbaseacr.azurecr.io/docker.io/openjdk:19-slim
+#FROM cepgbaseacr.azurecr.io/docker.io/openjdk:19-slim
+FROM openjdk:19-slim
 
 VOLUME /tmp
 
