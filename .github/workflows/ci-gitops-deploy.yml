@@ -42,7 +42,7 @@ jobs:
 
       - name: 📤 Commit updated K8s manifest
         run: |
-          git config --global user.name ${{ secrets.GITHUB_NAME }}
+          git config --global user.name "kmousek"
           git config --global user.email "kmousek@naver.com"
           git add manifests/base/deployment.yaml
           git commit -m "Update image tag for deployment" || echo "No changes to commit"
