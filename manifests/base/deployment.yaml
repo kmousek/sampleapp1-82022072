@@ -16,4 +16,4 @@ spec:
         - name: cloud-sample 
           image: kmousek/sampleapp1-82022072:latest
           ports:
-          - containerPort: 8080
+          - containerPort: 8888
