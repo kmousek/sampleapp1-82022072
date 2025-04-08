@@ -3,7 +3,10 @@ kind: Service
 metadata:
     name: cloud-sample
 spec:
-    ports:
-    - port: 8080 
     selector:
         app: cloud-sample
+    ports:
+        - name: http
+          port: 8888         # 클러스터 내부에서 접근할 포트
+          targetPort: 8888   # 실제 Pod에서 열려 있는 포트 (Spring Boot)
+    
