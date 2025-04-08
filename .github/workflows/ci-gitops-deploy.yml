@@ -45,5 +45,5 @@ jobs:
           cd manifests
           git config --global user.name "github-actions@github.com"
           git config --global user.email "github-actions"
-          git commit -am "Update image tag for deployment"
+          git commit -am "Update image tag for deployment" || echo "No changes to commit"
           git push -u origin dev
