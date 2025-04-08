@@ -21,7 +21,7 @@ spring:
       mode: always
 #      mode: embedded
 server:
-  port: 8080
+  port: 8888
 
 management:
   endpoints:
