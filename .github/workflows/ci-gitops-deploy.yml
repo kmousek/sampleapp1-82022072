@@ -20,8 +20,8 @@ jobs:
           distribution: 'temurin'
 
       - name: 🧱 Build with Maven
-        run: mvn clean package -DskipTests
-
+        run: mvn -B package --file pom.xml
+                
       - name: 🐳 Docker login
         uses: docker/login-action@v3
         with:
@@ -42,8 +42,8 @@ jobs:
 
       - name: 📤 Commit updated K8s manifest
         run: |
-          git config --global user.name "kmousek"
-          git config --global user.email "kmousek@naver.com"
-          git add manifests/base/deployment.yaml
-          git commit -m "Update image tag for deployment" || echo "No changes to commit"
-          git push
+          cd manifests
+          git config --global user.name "github-actions@github.com"
+          git config --global user.email "github-actions"
+          git commit -am "Update image tag for deployment"
+          git push -u origin main
