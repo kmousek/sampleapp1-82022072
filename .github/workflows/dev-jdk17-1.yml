@@ -1,0 +1,290 @@
+name: dev-jdk17-1
+
+env:
+  branch: ${{ github.event.inputs.branch }}
+  REPO_NAME: ${GITHUB_REPOSITORY##*/}
+  CONTAINER_NAME: dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run the workflow'
+        required: true
+        default: 'dev'
+        type: string                            # 변경1 choice → string
+        
+        
+        
+
+permissions:
+  id-token: write
+  contents: write
+  actions: read
+  security-events: write
+
+# main 브랜치일 경우 빌드 X
+# main 브랜치는 운영 태깅 작업 -> 운영 배포
+jobs:
+  build:
+    #runs-on: [self-hosted, Linux, X64, runner03]
+    runs-on: [maven-arc]
+    if: ${{ github.event.inputs.branch != 'main' }}  # 변경2
+    outputs:
+      BINARY_NAME: ${{ steps.set_artifacts_info.outputs.BINARY_NAME }}
+      CONTAINER_NAME: ${{ steps.set_artifacts_info.outputs.CONTAINER_NAME }}
+      ACCOUNT_NAME: ${{ steps.set_artifacts_info.outputs.ACCOUNT_NAME }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.branch }}  # 변경3
+
+      - name: Parse Azure credentials (key vault)
+        id: parse-credentials
+        run: |
+          echo "AZURE_CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS_DEV_1  }}' | jq -r .clientId)" >> $GITHUB_ENV
+          echo "AZURE_TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS_DEV_1  }}' | jq -r .tenantId)" >> $GITHUB_ENV
+          echo "AZURE_SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS_DEV_1  }}' | jq -r .subscriptionId)" >> $GITHUB_ENV
+          echo "AZURE_KEYVAULT_NAME=$(echo '${{ secrets.AZURE_CREDENTIALS_DEV_1  }}' | jq -r .keyVaultName)" >> $GITHUB_ENV
+
+      - name: Debug parsed values
+        run: |
+          echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
+          echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
+          echo "AZURE_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID"
+          echo "AZURE_KEYVAULT_NAME=$AZURE_KEYVAULT_NAME"
+
+      - name: Azure login with OIDC(UMI)
+        uses: azure/login@v2
+        env:
+          AZURE_LOGIN_PRE_CLEANUP: true
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure Login
+        run: az account show
+
+      - name: Retrieve secrets (Key Vault)
+        id: get_keyvault_secrets
+        run: |
+          echo "Checking Azure account status..."
+          az account show
+          
+          echo "Retrieving secrets from Key Vault..."
+          STORAGE_ACCOUNT_ACCESS_KEY=$(az keyvault secret show --name "STORAGE-ACCOUNT-ACCESS-KEY" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query value -o tsv)
+          STORAGE_ACCOUNT_NAME=$(az keyvault secret show --name "STORAGE-ACCOUNT-NAME" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query value -o tsv)
+          GIT_TOKEN=$(az keyvault secret show --name "GIT-TOKEN" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query value -o tsv)
+
+          echo "STORAGE_ACCOUNT_ACCESS_KEY=$STORAGE_ACCOUNT_ACCESS_KEY" >> $GITHUB_ENV
+          echo "STORAGE_ACCOUNT_NAME=$STORAGE_ACCOUNT_NAME" >> $GITHUB_ENV
+          echo "GIT_TOKEN=$GIT_TOKEN" >> $GITHUB_ENV
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "jdkfile" # required
+          jdkFile: /actions-runner/languages/java/17.0.10/microsoft-jdk-17.0.10-linux-x64.tar.gz
+          java-version: "17.0.10" # 여기에 사용할 버전을 명시합니다.
+          architecture: x64
+
+      - name: Set up Maven
+        uses: hb0730/maven-action@v1.0.2
+        with:
+          maven-file: /actions-runner/build-tools/maven/4.0.0/apache-maven-4.0.0-beta-4-bin.tar.gz
+          maven-version: 4.0.0
+
+      - name: Java Version Check
+        run: |
+          java -version
+          
+      - name: Configure maven settings.xml
+        run: |
+          cat <<EOF > ./settings.xml
+          <settings>
+            <servers>
+                  <server>
+                      <id>maven-default-http-blocker</id>
+                  </server>
+              </servers>
+              <mirrors>
+                  <mirror>
+                    <id>maven-default-http-blocker</id>
+                    <mirrorOf>external:*</mirrorOf>
+                    <name>Pseudo repository to mirror external repositories initially using HTTP.</name>
+                    <url>http://build-proxy.azdevops.kt.co.kr/repository/maven-public/</url>
+                    <blocked>false</blocked>
+                  </mirror>
+              </mirrors>
+          
+              <localRepository>\${GITHUB_WORKSPACE}/repository</localRepository>
+          </settings>
+          EOF
+        shell: bash
+
+      # - name: Maven Library Setting
+      #   run: |
+      #     mvn install:install-file -Dfile=repository/ADUtilSSL/ADUtilSSL/1.0/ADUtilSSL-1.0.jar -DpomFile=repository/ADUtilSSL/ADUtilSSL/1.0/ADUtilSSL-1.0.pom -DgroupId=ADUtilSSL -DartifactId=ADUtilSSL -Dversion=1.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/kt/isp/isp-inter/1.0.0.AZURE/isp-inter-1.0.0.AZURE.jar -DpomFile=repository/com/kt/isp/isp-inter/1.0.0.AZURE/isp-inter-1.0.0.AZURE.pom -DgroupId=com.kt.isp -DartifactId=isp-inter -Dversion=1.0.0.AZURE -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/kt/isp/isp-cmn/1.0.0.AZURE/isp-cmn-1.0.0.AZURE.jar -DpomFile=repository/com/kt/isp/isp-cmn/1.0.0.AZURE/isp-cmn-1.0.0.AZURE.pom -DgroupId=com.kt.isp -DartifactId=isp-cmn -Dversion=1.0.0.AZURE -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/kt/JKTFCrypto/1.0/JKTFCrypto-1.0.jar -DpomFile=repository/com/kt/JKTFCrypto/1.0/JKTFCrypto-1.0.pom -DgroupId=com.kt -DartifactId=JKTFCrypto -Dversion=1.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/lgcns/mpay/mpay_merchant_encoder/1.0/mpay_merchant_encoder-1.0.jar -DpomFile=repository/com/lgcns/mpay/mpay_merchant_encoder/1.0/mpay_merchant_encoder-1.0.pom -DgroupId=com.lgcns.mpay -DartifactId=mpay_merchant_encoder -Dversion=1.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/lgcns/kmpay/mpay_shopping_merchant/0.4.15/mpay_shopping_merchant-0.4.15.jar -DpomFile=repository/com/lgcns/kmpay/mpay_shopping_merchant/0.4.15/mpay_shopping_merchant-0.4.15.pom -DgroupId=com.lgcns.kmpay -DartifactId=mpay_shopping_merchant -Dversion=0.4.15 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/org/opensaml/opensaml-core/4.2.0/opensaml-core-4.2.0.jar -DpomFile=repository/org/opensaml/opensaml-core/4.2.0/opensaml-core-4.2.0.pom -DgroupId=org.opensaml -DartifactId=opensaml-core -Dversion=4.2.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/org/opensaml/opensaml-profile-impl/4.2.0/opensaml-profile-impl-4.2.0.jar -DpomFile=repository/org/opensaml/opensaml-profile-impl/4.2.0/opensaml-profile-impl-4.2.0.pom -DgroupId=org.opensaml -DartifactId=opensaml-profile-impl -Dversion=4.2.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/org/opensaml/opensaml-saml-api/4.2.0/opensaml-saml-api-4.2.0.jar -DpomFile=repository/org/opensaml/opensaml-saml-api/4.2.0/opensaml-saml-api-4.2.0.pom -DgroupId=org.opensaml -DartifactId=opensaml-saml-api -Dversion=4.2.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/org/opensaml/opensaml-saml-impl/4.2.0/opensaml-saml-impl-4.2.0.jar -DpomFile=repository/org/opensaml/opensaml-saml-impl/4.2.0/opensaml-saml-impl-4.2.0.pom -DgroupId=org.opensaml -DartifactId=opensaml-saml-impl -Dversion=4.2.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/org/opensaml/opensaml-security-impl/4.2.0/opensaml-security-impl-4.2.0.jar -DpomFile=repository/org/opensaml/opensaml-security-impl/4.2.0/opensaml-security-impl-4.2.0.pom -DgroupId=org.opensaml -DartifactId=opensaml-security-impl -Dversion=4.2.0 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/initech/safedb/SafeDBCrypto/3.2.9/SafeDBCrypto-3.2.9.jar -DpomFile=repository/com/initech/safedb/SafeDBCrypto/3.2.9/SafeDBCrypto-3.2.9.pom -DgroupId=com.initech.safedb -DartifactId=SafeDBCrypto -Dversion=3.2.9 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/initech/safedb/SafeDBSDK/3.2.18/SafeDBSDK-3.2.18.jar -DpomFile=repository/com/initech/safedb/SafeDBSDK/3.2.18/SafeDBSDK-3.2.18.pom -DgroupId=com.initech.safedb -DartifactId=SafeDBSDK -Dversion=3.2.18 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/initech/safedb/SafeDBCore/3.2.9/SafeDBCore-3.2.9.jar -DpomFile=repository/com/initech/safedb/SafeDBCore/3.2.9/SafeDBCore-3.2.9.pom -DgroupId=com.initech.safedb -DartifactId=SafeDBCore -Dversion=3.2.9 -Dpackaging=jar --settings ./settings.xml
+      #     mvn install:install-file -Dfile=repository/com/kt/xroshot/xroshot_core/1.0/xroshot_core-1.0.jar -DpomFile=repository/com/kt/xroshot/xroshot_core/1.0/xroshot_core-1.0.pom -DgroupId=com.kt.xroshot -DartifactId=xroshot_core -Dversion=1.0 -Dpackaging=jar --settings ./settings.xml
+
+      - name: Download latest shared jars      
+        run: |
+          echo "start Download latest shared jars..."
+          mkdir -p ./repository/sharedJars
+          # 파일명: dev.frwk-web-1.250722.1105.v008.jar
+          for prefix in frwk frwk-web comn-dao; do
+          	rm -f ./repository/sharedJars/${{ env.CONTAINER_NAME }}.${prefix}-1.*.jar
+          	LATEST_JAR=$(az storage blob list \
+          		--account-name ${{ env.STORAGE_ACCOUNT_NAME }} \
+          		--container-name ${{ env.CONTAINER_NAME }} \
+          		--query "[?starts_with(name, '${{ env.CONTAINER_NAME }}.${prefix}-1.') && ends_with(name, '.jar')].name" \
+          		--output tsv \
+          		--auth-mode key \
+          		--account-key ${{ env.STORAGE_ACCOUNT_ACCESS_KEY }} | sort | tail -n 1 )
+          	if [ -n "$LATEST_JAR" ]; then
+          		echo "Downloading $LATEST_JAR ..."
+          		az storage blob download \
+          			--account-name ${{ env.STORAGE_ACCOUNT_NAME }} \
+          			--container-name ${{ env.CONTAINER_NAME }} \
+          			--name "$LATEST_JAR" \
+          			--file "./repository/sharedJars/$LATEST_JAR" \
+          			--auth-mode key \
+          			--account-key ${{ env.STORAGE_ACCOUNT_ACCESS_KEY }}
+          	else
+          		echo "No jar found for prefix: $prefix"
+          	fi
+          done
+          echo "ls -al ./repository/sharedJars"
+          ls -al ./repository/sharedJars
+          echo "end Download latest shared jars..."
+      
+      - name: Maven install downloaded jars
+        run: |
+          echo "start Maven install downloaded jars..."
+          # 파일명: dev.frwk-web-1.250722.1105.v008.jar
+          for prefix in frwk frwk-web comn-dao; do
+            for JAR in ./repository/sharedJars/${{ env.CONTAINER_NAME }}.${prefix}-1.*.jar; do
+              [ -e "$JAR" ] || continue # 매칭 파일 없으면 건너뜀 
+          	  BASENAME=$(basename "$JAR" .jar)
+          	  ARTIFACT_ID=$(echo "$BASENAME" | sed -E "s/^${{ env.CONTAINER_NAME }}\.//" | sed -E 's/-[12]\..*$//')
+          	  VERSION=1.0.0.AZURE
+          	  echo "Registering $JAR as $ARTIFACT_ID:$VERSION"
+          	  mvn install:install-file \
+          		-Dfile="$JAR" \
+          		-DgroupId=com.kt.nbiot \
+          		-DartifactId=$ARTIFACT_ID\
+          		-Dversion=$VERSION \
+          		-Dpackaging=jar \
+          		-DgeneratePom=true \
+          		-s ./settings.xml
+          	done
+          done  
+          echo "end Maven install downloaded jars..."     	 
+      
+      - name: Maven Library Setting
+        run: |
+          echo "start Maven Library Setting..."
+          mvn install:install-file -Dfile=repository/lib/edb-jdbc16-1.0.0.jar -DgroupId=com.edb -DartifactId=edb-jdbc16 -Dversion=1.0.0 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/httpserver-1.0.8.Final.jar -DgroupId=org.jboss.com.sun.httpserver -DartifactId=httpserver -Dversion=1.0.8.Final -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/INICrypto-4.2.10.jar -DgroupId=com.initech -DartifactId=INICrypto -Dversion=4.2.10 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/INISAFECore-2.2.50.jar -DgroupId=com.initech -DartifactId=INISAFECore -Dversion=2.2.50 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/INISAFENet-7.2.65.NS.jar -DgroupId=com.initech -DartifactId=INISAFENet -Dversion=7.2.65.NS -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/INISAFEPKI-1.1.50.jar -DgroupId=com.initech -DartifactId=INISAFEPKI -Dversion=1.1.50 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/json-lib-2.4.jar -DgroupId=net.sf.json-lib -DartifactId=json-lib -Dversion=2.4 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/SafeDBCore-3.2.22.jar -DgroupId=com.initech -DartifactId=SafeDBCore -Dversion=3.2.22 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/SafeDBCrypto-3.2.22.jar -DgroupId=com.initech -DartifactId=SafeDBCrypto -Dversion=3.2.22 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/SafeDBSDK-3.2.22.jar -DgroupId=com.initech -DartifactId=SafeDBSDK -Dversion=3.2.22 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          mvn install:install-file -Dfile=repository/lib/jaxws-rt-4.0.3.jar -DgroupId=com.sun.xml.ws -DartifactId=jaxws-rt -Dversion=4.0.3 -Dpackaging=jar -DgeneratePom=true -s ./settings.xml
+          echo "end Maven Library Setting..."
+                    
+      - name: maven build
+        run: |
+          export MAVEN_OPTS="-Xms1G -Xmx2G -Xss10m"
+          export LANG=en_US.UTF-8
+          mvn clean install -DskipTests -Dmaven.test.failure.ignore=true --settings ./settings.xml
+
+      - name: List for build
+        run: ls -al ./target
+
+      # Tagging rule
+      # [yy].[m].[d].[H][M].v[actions build number]
+      - name: Set Tag for Build and Artifacts
+        run: |
+          BRANCH_TAG=$(echo "${{ env.branch }}" | sed 's/\//-/g')
+          echo "tag=${BRANCH_TAG}.${{ env.REPO_NAME }}-1.$(TZ=UTC-9 date +'%y%m%d.%H%M').$(printf 'v%03d' ${{github.run_number}})" >> $GITHUB_ENV
+          echo ""
+
+      - name: Set Artifacts Info
+        id: set_artifacts_info
+        run: |
+          echo "BINARY_NAME=${{ env.tag }}.war" >> $GITHUB_OUTPUT
+          echo "CONTAINER_NAME=${{ env.CONTAINER_NAME }}" >> $GITHUB_OUTPUT
+          echo "ACCOUNT_NAME=${{ env.STORAGE_ACCOUNT_NAME }}" >> $GITHUB_OUTPUT
+
+      - name: Upload to Azure blob storage
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            echo "Starting upload to Azure Blob Storage..."
+            az storage blob upload \
+              --account-name ${{ env.STORAGE_ACCOUNT_NAME }} \
+              --container-name ${{ env.CONTAINER_NAME }} \
+              --name ${{ env.tag }}.war \
+              --file target/${{ env.REPO_NAME }}.war \
+              --overwrite \
+              --auth-mode key \
+              --account-key ${{ env.STORAGE_ACCOUNT_ACCESS_KEY }}
+            echo "Upload completed successfully"
+
+      - name: Blob Container List
+        run: |
+          az storage blob list --account-name ${{ env.STORAGE_ACCOUNT_NAME }} --account-key ${{ env.STORAGE_ACCOUNT_ACCESS_KEY }} --container-name ${{ env.CONTAINER_NAME }} --query "[].{Name:name}" --output table
+
+      - name: 09. Add Git Tag "${{ env.tag }}"
+        run: |
+          echo "Adding Git tag ${{ env.tag }}..."
+          git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "${{ github.actor }} "
+          git tag -a "${{ env.tag }}" -m "${{ env.tag }}.jar"
+          git push origin "${{ env.tag }}"
+
+  #trivy 진단
+  run-trivy:
+    needs: build
+    runs-on: [trivy-arc]
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+      security-events: write
+    steps:
+      - name: Checkout Git Repository
+        uses: actions/checkout@v3
+
+      - name: Login to ACR
+        uses: ktdev-templates/azure-login@v1
+        with:
+          azure-credentials: ${{ secrets.AZURE_CREDENTIALS_DEV_1 }}
+
+      - name: Run Trivy and Upload Results
+        uses: ktdev-templates/trivy-arc-vm@v1.1
+        with:
+          binary_name: "${{ needs.build.outputs.BINARY_NAME }}"
+          account_name: "${{ needs.build.outputs.ACCOUNT_NAME }}"
+          container_name: "${{ needs.build.outputs.CONTAINER_NAME }}"
