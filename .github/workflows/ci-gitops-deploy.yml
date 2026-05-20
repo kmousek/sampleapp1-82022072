@@ -1,9 +1,17 @@
 name: CI/CD to Kubernetes via ArgoCD
 
+env:
+  branch: ${{ github.event.inputs.branch }}
+  REPO_NAME: ${GITHUB_REPOSITORY##*/}
+  CONTAINER_NAME: dev
+
 on:
   push:
-    branches:
-      - dev
+      branch:
+        description: 'Branch to run the workflow'
+        required: true
+        default: 'dev'
+        type: string
       
 permissions:
   contents: write
